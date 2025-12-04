@@ -103,6 +103,17 @@ python inference.py \
 
 ### スタイル空間可視化
 
+**高速版 (PCA推奨):**
+```bash
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --viz-method pca \
+  --test-images img1.jpg img2.jpg
+```
+
+**高品質版 (t-SNE、時間かかる):**
 ```bash
 python inference.py \
   --checkpoint checkpoints/best_model.pth \
@@ -188,6 +199,24 @@ which python
 
 # 再インストール
 pip install -r requirements.txt
+```
+
+### 可視化が遅い
+
+```bash
+# PCAを使用（高速）
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --viz-method pca
+
+# またはサンプル数を減らす
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --max-samples 1000
 ```
 
 ## 📈 学習の進捗確認

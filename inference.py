@@ -193,6 +193,8 @@ def visualize_style_space(
     resolution: int,
     device: str,
     use_msa_net: bool,
+    viz_method: str = 'tsne',
+    max_samples: int = 5000,
     x_range: Tuple[float, float] = None,
     y_range: Tuple[float, float] = None,
     output_path: str = 'visualizations/style_space.png'
@@ -253,17 +255,93 @@ def visualize_style_space(
     else:
         all_features = train_features
 
+    print(f"  Total samples for visualization: {all_features.shape[0]}")
+    print(f"  Visualization method: {viz_method.upper()}")
+
+    # Sample data if too large (t-SNE is slow for large datasets)
+    sampled_indices = None
+
+    if all_features.shape[0] > max_samples:
+        print(f"  ⚠️  Dataset too large ({all_features.shape[0]} samples)")
+        print(f"  Sampling {max_samples} samples for faster visualization...")
+
+        # Always include test samples if they exist
+        if test_features is not None:
+            n_train_samples = max_samples - len(test_features)
+            train_sample_indices = np.random.choice(
+                len(train_features),
+                size=min(n_train_samples, len(train_features)),
+                replace=False
+            )
+            sampled_indices = np.concatenate([
+                train_sample_indices,
+                np.arange(len(train_features), len(train_features) + len(test_features))
+            ])
+        else:
+            sampled_indices = np.random.choice(
+                len(all_features),
+                size=max_samples,
+                replace=False
+            )
+
+        all_features = all_features[sampled_indices]
+
+        # Adjust train_features and train_labels for sampled data
+        if test_features is not None:
+            train_features_sampled = all_features[:len(train_sample_indices)]
+            train_labels_sampled = train_labels[train_sample_indices]
+        else:
+            train_features_sampled = all_features
+            train_labels_sampled = train_labels[sampled_indices]
+
+        train_features = train_features_sampled
+        train_labels = train_labels_sampled
+
+        print(f"  Reduced to {all_features.shape[0]} samples")
+
     # Apply dimensionality reduction (t-SNE or PCA)
-    print("  Applying t-SNE dimensionality reduction...")
+    print("  Applying dimensionality reduction...")
 
-    # Use PCA first to reduce dimensions if features are high-dimensional
-    if all_features.shape[1] > 50:
-        pca = PCA(n_components=50)
-        all_features = pca.fit_transform(all_features)
+    if viz_method == 'pca':
+        # PCA-only visualization (fast)
+        print(f"    PCA ({all_features.shape[1]}D → 2D)")
+        pca = PCA(n_components=2, random_state=42)
+        embeddings_2d = pca.fit_transform(all_features)
+        explained_var = pca.explained_variance_ratio_.sum()
+        print(f"    PCA explained variance: {explained_var:.2%}")
+        print("    ✅ PCA complete!")
+        dim_method = 'PCA'
 
-    # Apply t-SNE
-    tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
-    embeddings_2d = tsne.fit_transform(all_features)
+    else:  # tsne
+        # Use PCA first to reduce dimensions if features are high-dimensional
+        if all_features.shape[1] > 50:
+            print(f"    Step 1/2: PCA ({all_features.shape[1]}D → 50D)")
+            pca = PCA(n_components=50)
+            all_features = pca.fit_transform(all_features)
+            explained_var = pca.explained_variance_ratio_.sum()
+            print(f"    PCA explained variance: {explained_var:.2%}")
+
+        # Adjust perplexity based on dataset size
+        n_samples = all_features.shape[0]
+        perplexity = min(30, max(5, n_samples // 100))
+
+        print(f"    Step 2/2: t-SNE (50D → 2D)")
+        print(f"    Samples: {n_samples}, Perplexity: {perplexity}")
+        print(f"    This may take a few minutes... ⏳")
+
+        # Apply t-SNE with verbose output
+        tsne = TSNE(
+            n_components=2,
+            random_state=42,
+            perplexity=perplexity,
+            n_iter=1000,
+            verbose=2,  # Show progress
+            n_jobs=-1   # Use all CPU cores
+        )
+
+        embeddings_2d = tsne.fit_transform(all_features)
+        print("    ✅ t-SNE complete!")
+        dim_method = 't-SNE'
 
     # Split embeddings back
     train_embeddings = embeddings_2d[:len(train_features)]
@@ -334,9 +412,9 @@ def visualize_style_space(
                 label=f'Test: {classes[pred_label]}' if i == 0 else ''
             )
 
-    plt.xlabel('t-SNE Dimension 1', fontsize=12)
-    plt.ylabel('t-SNE Dimension 2', fontsize=12)
-    plt.title('Art Style Space Visualization', fontsize=16, fontweight='bold')
+    plt.xlabel(f'{dim_method} Dimension 1', fontsize=12)
+    plt.ylabel(f'{dim_method} Dimension 2', fontsize=12)
+    plt.title(f'Art Style Space Visualization ({dim_method})', fontsize=16, fontweight='bold')
 
     # Set axis ranges if provided
     if x_range:
@@ -380,6 +458,10 @@ def main():
                         help='Path to training dataset (required for visualization)')
     parser.add_argument('--test-images', type=str, nargs='+',
                         help='Test images to plot in style space')
+    parser.add_argument('--viz-method', type=str, default='tsne', choices=['tsne', 'pca'],
+                        help='Visualization method: tsne (slower, better) or pca (faster)')
+    parser.add_argument('--max-samples', type=int, default=5000,
+                        help='Maximum samples for visualization (default: 5000)')
     parser.add_argument('--x-range', type=float, nargs=2,
                         help='X-axis range for visualization (min max)')
     parser.add_argument('--y-range', type=float, nargs=2,
@@ -503,6 +585,8 @@ def main():
             resolution,
             device,
             use_msa_net,
+            args.viz_method,
+            args.max_samples,
             x_range,
             y_range,
             args.output_viz

@@ -263,6 +263,7 @@ Inference: 100%|████████████| 150/150
 
 ### スタイル空間可視化
 
+**基本的な可視化 (t-SNE):**
 ```bash
 python inference.py \
   --checkpoint checkpoints/best_model.pth \
@@ -272,7 +273,31 @@ python inference.py \
   --output-viz visualizations/style_space.png
 ```
 
-カスタム軸範囲:
+**高速な可視化 (PCA):**
+t-SNEが遅い場合はPCAを使用：
+```bash
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --viz-method pca \
+  --test-images test1.jpg test2.jpg \
+  --output-viz visualizations/style_space_pca.png
+```
+
+**大規模データセット用:**
+サンプル数を調整して高速化：
+```bash
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --max-samples 2000 \
+  --viz-method pca \
+  --output-viz visualizations/style_space_fast.png
+```
+
+**カスタム軸範囲:**
 ```bash
 python inference.py \
   --checkpoint checkpoints/best_model.pth \
@@ -283,6 +308,11 @@ python inference.py \
   --y-range -40 40 \
   --output-viz visualizations/style_space_custom.png
 ```
+
+**可視化オプション:**
+- `--viz-method tsne`: t-SNE使用 (デフォルト、高品質だが遅い)
+- `--viz-method pca`: PCA使用 (高速だが品質は低い)
+- `--max-samples N`: 最大サンプル数 (デフォルト: 5000)
 
 ---
 
@@ -415,6 +445,41 @@ for p in Path('dataset').rglob('*.jpg'):
         print(f'Corrupted: {p}')
 "
 ```
+
+### t-SNE可視化が遅い/停止する
+
+t-SNEは大量のデータに対して非常に時間がかかります（数分〜数十分）。
+
+**解決策:**
+
+1. **PCAを使用** (推奨・最速):
+```bash
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --viz-method pca
+```
+
+2. **サンプル数を減らす**:
+```bash
+python inference.py \
+  --checkpoint checkpoints/best_model.pth \
+  --visualize \
+  --train-dataset dataset \
+  --max-samples 1000
+```
+
+3. **進捗を確認**:
+   - t-SNEは `verbose=2` で進捗が表示されます
+   - "Iteration XX" というメッセージが出ていれば動作中です
+   - 完全に停止している場合は Ctrl+C で中断してPCAを試してください
+
+**参考処理時間:**
+- 500サンプル (t-SNE): 約1分
+- 1000サンプル (t-SNE): 約3分
+- 5000サンプル (t-SNE): 約10-15分
+- 任意のサンプル数 (PCA): 数秒
 
 ---
 
