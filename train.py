@@ -288,6 +288,8 @@ def main():
                         help='Stop and save if val loss increases from previous epoch')
     parser.add_argument('--output-dir', type=str, default='checkpoints',
                         help='Output directory for checkpoints')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume training from')
 
     # Device args
     parser.add_argument('--device', type=str, default='cuda',
@@ -365,15 +367,72 @@ def main():
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    # Training loop
+    # Training loop state
     best_val_loss = float('inf')
     val_loss_history = []
+    start_epoch = 1
+
+    # Resume from checkpoint if specified
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print(f"\n📥 Loading checkpoint: {args.resume}")
+            checkpoint = torch.load(args.resume, map_location=device)
+
+            # Load model state
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"  ✓ Model state loaded")
+
+            # Load optimizer state
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print(f"  ✓ Optimizer state loaded")
+
+            # Restore training state
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_loss = checkpoint.get('best_val_loss', checkpoint.get('val_loss', float('inf')))
+            current_resolution = checkpoint.get('resolution', 384)
+
+            # Restore resolution index
+            if current_resolution in resolutions:
+                resolution_idx = resolutions.index(current_resolution)
+
+            # Restore val loss history if available
+            val_loss_history = checkpoint.get('val_loss_history', [])
+
+            print(f"  ✓ Resuming from epoch {start_epoch}")
+            print(f"  ✓ Current resolution: {current_resolution}x{current_resolution}")
+            print(f"  ✓ Best val loss: {best_val_loss:.4f}")
+
+            # Update dataset resolution if different
+            if current_resolution != 384:
+                full_dataset.transform = get_transforms(current_resolution, is_train=True)
+
+                # Recreate data loaders with new resolution
+                train_loader = DataLoader(
+                    train_dataset,
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=4,
+                    pin_memory=True
+                )
+
+                val_loader = DataLoader(
+                    val_dataset,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    num_workers=4,
+                    pin_memory=True
+                )
+
+        else:
+            print(f"❌ Checkpoint not found: {args.resume}")
+            print(f"   Starting training from scratch...")
 
     print(f"\n🎯 Starting training...")
     print(f"  Initial resolution: {current_resolution}x{current_resolution}")
     print(f"  Progressive resolutions: {resolutions}")
+    print(f"  Starting from epoch: {start_epoch}")
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         # Create progress bar for this epoch
         pbar = tqdm(
             total=len(train_loader),
@@ -420,6 +479,8 @@ def main():
                     'optimizer_state_dict': optimizer.state_dict(),
                     'val_loss': val_loss,
                     'val_acc': val_acc,
+                    'best_val_loss': best_val_loss,
+                    'val_loss_history': val_loss_history,
                     'resolution': current_resolution,
                     'classes': full_dataset.classes,
                     'use_msa_net': args.use_msa_net
@@ -436,6 +497,8 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': val_loss,
                 'val_acc': val_acc,
+                'best_val_loss': best_val_loss,
+                'val_loss_history': val_loss_history,
                 'resolution': current_resolution,
                 'classes': full_dataset.classes,
                 'use_msa_net': args.use_msa_net
@@ -449,6 +512,8 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': val_loss,
                 'val_acc': val_acc,
+                'best_val_loss': best_val_loss,
+                'val_loss_history': val_loss_history,
                 'resolution': current_resolution,
                 'classes': full_dataset.classes,
                 'use_msa_net': args.use_msa_net
@@ -500,6 +565,8 @@ def main():
         'optimizer_state_dict': optimizer.state_dict(),
         'val_loss': val_loss,
         'val_acc': val_acc,
+        'best_val_loss': best_val_loss,
+        'val_loss_history': val_loss_history,
         'resolution': current_resolution,
         'classes': full_dataset.classes,
         'use_msa_net': args.use_msa_net

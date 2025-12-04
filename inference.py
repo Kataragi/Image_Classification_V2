@@ -371,8 +371,9 @@ def visualize_style_space(
     # Create visualization
     plt.figure(figsize=(14, 10))
 
-    # Plot training data
-    colors = sns.color_palette('husl', len(classes))
+    # Plot training data with vivid primary colors
+    # Use tab10 colormap for vivid, distinct colors
+    colors = sns.color_palette('tab10', len(classes))
 
     for i, class_name in enumerate(classes):
         class_mask = train_labels == i

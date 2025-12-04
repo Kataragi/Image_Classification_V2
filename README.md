@@ -172,6 +172,30 @@ python train.py \
   --lr 1e-4
 ```
 
+### チェックポイントからの再開
+
+学習を中断した場合や、継続学習したい場合：
+
+```bash
+python train.py \
+  --dataset dataset \
+  --resume checkpoints/checkpoint_epoch_50.pth \
+  --epochs 150
+```
+
+**自動的に復元される情報:**
+- モデルの重み
+- オプティマイザの状態
+- 現在のエポック
+- 現在の解像度
+- Best validation loss
+- Validation loss履歴
+
+**利点:**
+- 学習が中断されても安全に再開できる
+- 解像度の段階的学習も継続される
+- TensorBoardのログも連続して記録される
+
 ### 詳細設定
 
 ```bash
@@ -202,6 +226,7 @@ python train.py \
 | `--save-every` | 保存間隔(エポック) | `10` |
 | `--early-stop-on-increase` | Val Loss上昇で停止 | `False` |
 | `--output-dir` | 出力ディレクトリ | `checkpoints` |
+| `--resume` | 再開するチェックポイント | `None` |
 
 ### TensorBoard起動
 
@@ -313,6 +338,8 @@ python inference.py \
 - `--viz-method tsne`: t-SNE使用 (デフォルト、高品質だが遅い)
 - `--viz-method pca`: PCA使用 (高速だが品質は低い)
 - `--max-samples N`: 最大サンプル数 (デフォルト: 5000)
+
+**注意**: スタイル空間可視化では、見やすさのため原色系の鮮やかな色を使用しています
 
 ---
 
@@ -480,6 +507,51 @@ python inference.py \
 - 1000サンプル (t-SNE): 約3分
 - 5000サンプル (t-SNE): 約10-15分
 - 任意のサンプル数 (PCA): 数秒
+
+---
+
+## 📜 更新履歴
+
+### Version 2.1 (Latest)
+
+**新機能:**
+
+1. **チェックポイントからの学習再開機能** (`--resume`)
+   - 学習が中断されても途中から再開可能
+   - モデル、オプティマイザ、エポック、解像度などの状態を完全復元
+   - 段階的解像度学習も正しく継続
+   - 使用例: `python train.py --resume checkpoints/checkpoint_epoch_50.pth`
+
+2. **t-SNE可視化の大幅なパフォーマンス改善**
+   - 進捗表示の追加（`verbose=2`）で処理状況が可視化
+   - 5000サンプル以上のデータセットは自動サンプリング
+   - PCAオプション追加で数秒で可視化完了（`--viz-method pca`）
+   - サンプル数制限オプション（`--max-samples`）
+   - マルチコアCPU対応（`n_jobs=-1`）
+
+3. **可視化の色改善**
+   - パステルカラーから原色系の鮮やかな色に変更
+   - クラス間の区別がより明確に
+
+**パフォーマンス:**
+- PCA可視化: 任意のサンプル数で数秒
+- t-SNE可視化: 1000サンプルで約3分（以前より高速化）
+- 大規模データセットでも快適に動作
+
+**ドキュメント:**
+- VISUALIZATION_FIX.md: 可視化改善の詳細説明を追加
+- README.md: チェックポイント再開、可視化オプションの説明を追加
+- QUICKSTART.md: 高速PCA可視化例を追加
+
+### Version 2.0
+
+**初期リリース:**
+- ConvNeXtV2-Base-22k-384ベースの画風分類
+- オプションのMSA-Net統合
+- 段階的解像度学習（384→512→768→1024）
+- 自動クラス重み付け
+- TensorBoard統合
+- 8クラス分類対応
 
 ---
 

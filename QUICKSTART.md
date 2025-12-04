@@ -74,6 +74,15 @@ python train.py \
   --batch-size 16
 ```
 
+### チェックポイントから再開
+
+```bash
+python train.py \
+  --dataset dataset \
+  --resume checkpoints/checkpoint_epoch_50.pth \
+  --epochs 150
+```
+
 ### TensorBoard起動 (別ターミナル)
 
 ```bash
