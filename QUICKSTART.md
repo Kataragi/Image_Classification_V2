@@ -74,6 +74,16 @@ python train.py \
   --batch-size 16
 ```
 
+### 高解像度トレーニング
+
+```bash
+python train.py \
+  --dataset dataset \
+  --resolution 512 \
+  --epochs 100 \
+  --batch-size 16
+```
+
 ### チェックポイントから再開
 
 ```bash

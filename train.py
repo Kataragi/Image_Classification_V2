@@ -247,18 +247,6 @@ def train_epoch(model, train_loader, criterion, optimizer, device, epoch, pbar):
     return train_loss, train_acc
 
 
-def should_increase_resolution_on_spike(current_val_loss: float, previous_val_loss: float, threshold: float = 0.1) -> bool:
-    """
-    Check if resolution should be increased due to val_loss spike
-    Returns True if val_loss increased by more than threshold
-    """
-    if previous_val_loss is None:
-        return False
-
-    increase = current_val_loss - previous_val_loss
-    return increase > threshold
-
-
 def main():
     parser = argparse.ArgumentParser(description='Art Style Classification Training')
 
@@ -279,8 +267,8 @@ def main():
                         help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
-    parser.add_argument('--resolution-threshold', type=float, default=0.1,
-                        help='Val loss increase threshold to trigger resolution increase and rollback (default: 0.1)')
+    parser.add_argument('--resolution', type=int, default=384, choices=[384, 512, 768, 1024],
+                        help='Training image resolution (default: 384)')
 
     # Save args
     parser.add_argument('--save-every', type=int, default=10,
@@ -313,16 +301,13 @@ def main():
     # Initialize TensorBoard
     writer = SummaryWriter('logs')
 
-    # Load full dataset with initial resolution
+    # Load full dataset with specified resolution
     print(f"\n📂 Loading dataset from: {args.dataset}")
-
-    current_resolution = 384
-    resolutions = [384, 512, 768, 1024]
-    resolution_idx = 0
+    print(f"   Training resolution: {args.resolution}x{args.resolution}")
 
     full_dataset = ArtStyleDataset(
         args.dataset,
-        transform=get_transforms(current_resolution, is_train=True)
+        transform=get_transforms(args.resolution, is_train=True)
     )
 
     # Calculate class weights
@@ -390,73 +375,23 @@ def main():
             # Restore training state
             start_epoch = checkpoint['epoch'] + 1
             best_val_loss = checkpoint.get('best_val_loss', checkpoint.get('val_loss', float('inf')))
-            current_resolution = checkpoint.get('resolution', 384)
-
-            # Restore resolution index
-            if current_resolution in resolutions:
-                resolution_idx = resolutions.index(current_resolution)
-
-            # Restore val loss history if available
-            val_loss_history = checkpoint.get('val_loss_history', [])
 
             print(f"  ✓ Resuming from epoch {start_epoch}")
-            print(f"  ✓ Current resolution: {current_resolution}x{current_resolution}")
             print(f"  ✓ Best val loss: {best_val_loss:.4f}")
-
-            # Update dataset resolution if different
-            if current_resolution != 384:
-                full_dataset.transform = get_transforms(current_resolution, is_train=True)
-
-                # Recreate data loaders with new resolution
-                train_loader = DataLoader(
-                    train_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=True,
-                    num_workers=4,
-                    pin_memory=True
-                )
-
-                val_loader = DataLoader(
-                    val_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=False,
-                    num_workers=4,
-                    pin_memory=True
-                )
 
         else:
             print(f"❌ Checkpoint not found: {args.resume}")
             print(f"   Starting training from scratch...")
 
     print(f"\n🎯 Starting training...")
-    print(f"  Initial resolution: {current_resolution}x{current_resolution}")
-    print(f"  Progressive resolutions: {resolutions}")
+    print(f"  Resolution: {args.resolution}x{args.resolution}")
     print(f"  Starting from epoch: {start_epoch}")
-    print(f"  Val loss spike threshold: {args.resolution_threshold}")
-
-    # Track previous epoch state for rollback
-    previous_epoch_checkpoint_path = None
-    previous_val_loss = None
 
     for epoch in range(start_epoch, args.epochs + 1):
-        # Save checkpoint at start of epoch (for potential rollback)
-        previous_epoch_checkpoint_path = os.path.join(args.output_dir, 'rollback_temp.pth')
-        torch.save({
-            'epoch': epoch - 1,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'val_loss': previous_val_loss if previous_val_loss is not None else float('inf'),
-            'best_val_loss': best_val_loss,
-            'val_loss_history': val_loss_history,
-            'resolution': current_resolution,
-            'classes': full_dataset.classes,
-            'use_msa_net': args.use_msa_net
-        }, previous_epoch_checkpoint_path)
-
         # Create progress bar for this epoch
         pbar = tqdm(
             total=len(train_loader),
-            desc=f'Epoch {epoch}/{args.epochs} [Res: {current_resolution}]',
+            desc=f'Epoch {epoch}/{args.epochs} [Res: {args.resolution}]',
             leave=True,
             ncols=100,
             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}'
@@ -478,65 +413,14 @@ def main():
         print(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.2f}%, "
               f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.2f}%")
 
-        # Check for val_loss spike (before appending to history)
-        if should_increase_resolution_on_spike(val_loss, previous_val_loss, args.resolution_threshold):
-            print(f"\n🔥 Val loss spike detected: {previous_val_loss:.4f} → {val_loss:.4f} (increase: {val_loss - previous_val_loss:.4f})")
-            print(f"   Threshold: {args.resolution_threshold}")
-
-            if resolution_idx < len(resolutions) - 1:
-                print(f"⏪ Rolling back to previous epoch and increasing resolution...")
-
-                # Load previous epoch's model
-                checkpoint = torch.load(previous_epoch_checkpoint_path, map_location=device)
-                model.load_state_dict(checkpoint['model_state_dict'])
-                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-                # Increase resolution
-                resolution_idx += 1
-                current_resolution = resolutions[resolution_idx]
-
-                print(f"📈 Resolution increased: {resolutions[resolution_idx-1]} → {current_resolution}")
-
-                # Update datasets with new resolution
-                full_dataset.transform = get_transforms(current_resolution, is_train=True)
-                val_dataset.dataset.transform = get_transforms(current_resolution, is_train=False)
-
-                # Recreate data loaders
-                train_loader = DataLoader(
-                    train_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=True,
-                    num_workers=4,
-                    pin_memory=True
-                )
-
-                val_loader = DataLoader(
-                    val_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=False,
-                    num_workers=4,
-                    pin_memory=True
-                )
-
-                print(f"✓ Model rolled back to epoch {epoch - 1}")
-                print(f"✓ Continuing training at {current_resolution}x{current_resolution}")
-
-                # Don't save this bad epoch, continue to next iteration
-                continue
-            else:
-                print(f"⚠️  Already at maximum resolution ({current_resolution}), cannot increase further")
-                print(f"   Continuing with current resolution...")
-
-        # Update history and previous val_loss
         val_loss_history.append(val_loss)
-        previous_val_loss = val_loss
 
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Loss/val', val_loss, epoch)
         writer.add_scalar('Accuracy/train', train_acc, epoch)
         writer.add_scalar('Accuracy/val', val_acc, epoch)
         writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
-        writer.add_scalar('Resolution', current_resolution, epoch)
+        writer.add_scalar('Resolution', args.resolution, epoch)
 
         # Early stopping on val loss increase
         if args.early_stop_on_increase and epoch > 1:
@@ -551,8 +435,7 @@ def main():
                     'val_loss': val_loss,
                     'val_acc': val_acc,
                     'best_val_loss': best_val_loss,
-                    'val_loss_history': val_loss_history,
-                    'resolution': current_resolution,
+                    'resolution': args.resolution,
                     'classes': full_dataset.classes,
                     'use_msa_net': args.use_msa_net
                 }, os.path.join(args.output_dir, f'early_stop_epoch_{epoch}.pth'))
@@ -569,8 +452,7 @@ def main():
                 'val_loss': val_loss,
                 'val_acc': val_acc,
                 'best_val_loss': best_val_loss,
-                'val_loss_history': val_loss_history,
-                'resolution': current_resolution,
+                'resolution': args.resolution,
                 'classes': full_dataset.classes,
                 'use_msa_net': args.use_msa_net
             }, os.path.join(args.output_dir, 'best_model.pth'))
@@ -584,8 +466,7 @@ def main():
                 'val_loss': val_loss,
                 'val_acc': val_acc,
                 'best_val_loss': best_val_loss,
-                'val_loss_history': val_loss_history,
-                'resolution': current_resolution,
+                'resolution': args.resolution,
                 'classes': full_dataset.classes,
                 'use_msa_net': args.use_msa_net
             }, os.path.join(args.output_dir, f'checkpoint_epoch_{epoch}.pth'))
@@ -593,13 +474,9 @@ def main():
         # Step scheduler
         scheduler.step()
 
-    # Clean up temporary rollback file
-    if previous_epoch_checkpoint_path and os.path.exists(previous_epoch_checkpoint_path):
-        os.remove(previous_epoch_checkpoint_path)
-
     print(f"\n✅ Training completed!")
     print(f"   Best Val Loss: {best_val_loss:.4f}")
-    print(f"   Final Resolution: {current_resolution}x{current_resolution}")
+    print(f"   Resolution: {args.resolution}x{args.resolution}")
 
     # Save final model
     torch.save({
@@ -609,8 +486,7 @@ def main():
         'val_loss': val_loss,
         'val_acc': val_acc,
         'best_val_loss': best_val_loss,
-        'val_loss_history': val_loss_history,
-        'resolution': current_resolution,
+        'resolution': args.resolution,
         'classes': full_dataset.classes,
         'use_msa_net': args.use_msa_net
     }, os.path.join(args.output_dir, 'final_model.pth'))
