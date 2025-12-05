@@ -247,15 +247,16 @@ def train_epoch(model, train_loader, criterion, optimizer, device, epoch, pbar):
     return train_loss, train_acc
 
 
-def should_increase_resolution(val_loss_history: List[float], threshold: float = 0.02) -> bool:
-    """Check if resolution should be increased (3 consecutive epochs with improvement < threshold)"""
-    if len(val_loss_history) < 4:
+def should_increase_resolution_on_spike(current_val_loss: float, previous_val_loss: float, threshold: float = 0.1) -> bool:
+    """
+    Check if resolution should be increased due to val_loss spike
+    Returns True if val_loss increased by more than threshold
+    """
+    if previous_val_loss is None:
         return False
 
-    recent_losses = val_loss_history[-4:]
-    improvements = [recent_losses[i] - recent_losses[i+1] for i in range(3)]
-
-    return all(imp < threshold for imp in improvements)
+    increase = current_val_loss - previous_val_loss
+    return increase > threshold
 
 
 def main():
@@ -278,8 +279,8 @@ def main():
                         help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
-    parser.add_argument('--resolution-threshold', type=float, default=0.02,
-                        help='Val loss improvement threshold for resolution increase')
+    parser.add_argument('--resolution-threshold', type=float, default=0.1,
+                        help='Val loss increase threshold to trigger resolution increase and rollback (default: 0.1)')
 
     # Save args
     parser.add_argument('--save-every', type=int, default=10,
@@ -431,8 +432,27 @@ def main():
     print(f"  Initial resolution: {current_resolution}x{current_resolution}")
     print(f"  Progressive resolutions: {resolutions}")
     print(f"  Starting from epoch: {start_epoch}")
+    print(f"  Val loss spike threshold: {args.resolution_threshold}")
+
+    # Track previous epoch state for rollback
+    previous_epoch_checkpoint_path = None
+    previous_val_loss = None
 
     for epoch in range(start_epoch, args.epochs + 1):
+        # Save checkpoint at start of epoch (for potential rollback)
+        previous_epoch_checkpoint_path = os.path.join(args.output_dir, 'rollback_temp.pth')
+        torch.save({
+            'epoch': epoch - 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_loss': previous_val_loss if previous_val_loss is not None else float('inf'),
+            'best_val_loss': best_val_loss,
+            'val_loss_history': val_loss_history,
+            'resolution': current_resolution,
+            'classes': full_dataset.classes,
+            'use_msa_net': args.use_msa_net
+        }, previous_epoch_checkpoint_path)
+
         # Create progress bar for this epoch
         pbar = tqdm(
             total=len(train_loader),
@@ -454,11 +474,62 @@ def main():
             model, val_loader, criterion, device, epoch, writer, full_dataset.classes
         )
 
-        val_loss_history.append(val_loss)
-
         # Logging
         print(f"Epoch {epoch}: Train Loss={train_loss:.4f}, Train Acc={train_acc:.2f}%, "
               f"Val Loss={val_loss:.4f}, Val Acc={val_acc:.2f}%")
+
+        # Check for val_loss spike (before appending to history)
+        if should_increase_resolution_on_spike(val_loss, previous_val_loss, args.resolution_threshold):
+            print(f"\n🔥 Val loss spike detected: {previous_val_loss:.4f} → {val_loss:.4f} (increase: {val_loss - previous_val_loss:.4f})")
+            print(f"   Threshold: {args.resolution_threshold}")
+
+            if resolution_idx < len(resolutions) - 1:
+                print(f"⏪ Rolling back to previous epoch and increasing resolution...")
+
+                # Load previous epoch's model
+                checkpoint = torch.load(previous_epoch_checkpoint_path, map_location=device)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+                # Increase resolution
+                resolution_idx += 1
+                current_resolution = resolutions[resolution_idx]
+
+                print(f"📈 Resolution increased: {resolutions[resolution_idx-1]} → {current_resolution}")
+
+                # Update datasets with new resolution
+                full_dataset.transform = get_transforms(current_resolution, is_train=True)
+                val_dataset.dataset.transform = get_transforms(current_resolution, is_train=False)
+
+                # Recreate data loaders
+                train_loader = DataLoader(
+                    train_dataset,
+                    batch_size=args.batch_size,
+                    shuffle=True,
+                    num_workers=4,
+                    pin_memory=True
+                )
+
+                val_loader = DataLoader(
+                    val_dataset,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    num_workers=4,
+                    pin_memory=True
+                )
+
+                print(f"✓ Model rolled back to epoch {epoch - 1}")
+                print(f"✓ Continuing training at {current_resolution}x{current_resolution}")
+
+                # Don't save this bad epoch, continue to next iteration
+                continue
+            else:
+                print(f"⚠️  Already at maximum resolution ({current_resolution}), cannot increase further")
+                print(f"   Continuing with current resolution...")
+
+        # Update history and previous val_loss
+        val_loss_history.append(val_loss)
+        previous_val_loss = val_loss
 
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Loss/val', val_loss, epoch)
@@ -519,40 +590,12 @@ def main():
                 'use_msa_net': args.use_msa_net
             }, os.path.join(args.output_dir, f'checkpoint_epoch_{epoch}.pth'))
 
-        # Check if should increase resolution
-        if should_increase_resolution(val_loss_history, args.resolution_threshold):
-            if resolution_idx < len(resolutions) - 1:
-                resolution_idx += 1
-                current_resolution = resolutions[resolution_idx]
-
-                print(f"\n📈 Increasing resolution: {resolutions[resolution_idx-1]} → {current_resolution}")
-
-                # Update datasets with new resolution
-                full_dataset.transform = get_transforms(current_resolution, is_train=True)
-                val_dataset.dataset.transform = get_transforms(current_resolution, is_train=False)
-
-                # Recreate data loaders
-                train_loader = DataLoader(
-                    train_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=True,
-                    num_workers=4,
-                    pin_memory=True
-                )
-
-                val_loader = DataLoader(
-                    val_dataset,
-                    batch_size=args.batch_size,
-                    shuffle=False,
-                    num_workers=4,
-                    pin_memory=True
-                )
-
-                # Reset val loss history for new resolution
-                val_loss_history = []
-
         # Step scheduler
         scheduler.step()
+
+    # Clean up temporary rollback file
+    if previous_epoch_checkpoint_path and os.path.exists(previous_epoch_checkpoint_path):
+        os.remove(previous_epoch_checkpoint_path)
 
     print(f"\n✅ Training completed!")
     print(f"   Best Val Loss: {best_val_loss:.4f}")
