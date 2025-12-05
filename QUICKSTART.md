@@ -87,11 +87,34 @@ python train.py \
 ### チェックポイントから再開
 
 ```bash
+# デフォルト（3エポックのCosine Warmup付き）
 python train.py \
   --dataset dataset \
   --resume checkpoints/checkpoint_epoch_50.pth \
+  --lr 1e-4 \
   --epochs 150
+
+# Warmup期間を変更
+python train.py \
+  --dataset dataset \
+  --resume checkpoints/checkpoint_epoch_50.pth \
+  --lr 5e-5 \
+  --epochs 150 \
+  --warmup-epochs 5
+
+# Warmup無しで再開
+python train.py \
+  --dataset dataset \
+  --resume checkpoints/checkpoint_epoch_50.pth \
+  --lr 1e-4 \
+  --epochs 150 \
+  --warmup-epochs 0
 ```
+
+**注意:**
+- チェックポイントから再開する際、`--lr` で指定した学習率が使用されます
+- デフォルトで3エポックのCosine Warmupが適用されます（学習率の急激な変化を防ぐ）
+- `--warmup-epochs` で期間を調整できます（0で無効化）
 
 ### TensorBoard起動 (別ターミナル)
 

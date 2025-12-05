@@ -267,6 +267,8 @@ def main():
                         help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
+    parser.add_argument('--warmup-epochs', type=int, default=3,
+                        help='Number of epochs for cosine warmup when resuming training (default: 3)')
     parser.add_argument('--resolution', type=int, default=384, choices=[384, 512, 768, 1024],
                         help='Training image resolution (default: 384)')
 
@@ -351,12 +353,12 @@ def main():
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Training loop state
     best_val_loss = float('inf')
     val_loss_history = []
     start_epoch = 1
+    is_resumed = False
 
     # Resume from checkpoint if specified
     if args.resume:
@@ -368,20 +370,43 @@ def main():
             model.load_state_dict(checkpoint['model_state_dict'])
             print(f"  ✓ Model state loaded")
 
-            # Load optimizer state
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            print(f"  ✓ Optimizer state loaded")
-
             # Restore training state
             start_epoch = checkpoint['epoch'] + 1
             best_val_loss = checkpoint.get('best_val_loss', checkpoint.get('val_loss', float('inf')))
+            is_resumed = True
 
             print(f"  ✓ Resuming from epoch {start_epoch}")
             print(f"  ✓ Best val loss: {best_val_loss:.4f}")
+            print(f"  ✓ Using CLI learning rate: {args.lr}")
+            print(f"  ✓ Cosine warmup: {args.warmup_epochs} epochs")
 
         else:
             print(f"❌ Checkpoint not found: {args.resume}")
             print(f"   Starting training from scratch...")
+
+    # Setup learning rate scheduler
+    if is_resumed and args.warmup_epochs > 0:
+        # Cosine warmup + CosineAnnealing for resumed training
+        def warmup_cosine_schedule(epoch):
+            """
+            Cosine warmup for first warmup_epochs, then cosine annealing
+            epoch is 0-indexed (epoch 0 = first epoch of resumed training)
+            """
+            if epoch < args.warmup_epochs:
+                # Cosine warmup from 0 to target lr
+                return (1 - np.cos(np.pi * epoch / args.warmup_epochs)) / 2
+            else:
+                # Cosine annealing after warmup
+                total_epochs = args.epochs - start_epoch + 1
+                progress = (epoch - args.warmup_epochs) / (total_epochs - args.warmup_epochs)
+                return 0.5 * (1 + np.cos(np.pi * progress))
+
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_cosine_schedule)
+        print(f"  ✓ Scheduler: Cosine Warmup ({args.warmup_epochs} epochs) + Cosine Annealing")
+    else:
+        # Standard cosine annealing for new training
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        print(f"  ✓ Scheduler: Cosine Annealing")
 
     print(f"\n🎯 Starting training...")
     print(f"  Resolution: {args.resolution}x{args.resolution}")

@@ -180,20 +180,37 @@ python train.py \
 python train.py \
   --dataset dataset \
   --resume checkpoints/checkpoint_epoch_50.pth \
-  --epochs 150
+  --epochs 150 \
+  --lr 1e-4
 ```
 
 **自動的に復元される情報:**
 - モデルの重み
-- オプティマイザの状態
 - 現在のエポック
 - 現在の解像度
 - Best validation loss
-- Validation loss履歴
+
+**学習率の動作:**
+- コマンドラインで指定した `--lr` が使用されます（チェックポイントから復元されません）
+- デフォルトで3エポックのCosine Warmupが適用されます
+  - 学習率は0から指定値まで徐々に上昇（cosine曲線）
+  - Warmupエポック数は `--warmup-epochs` で変更可能
+- Warmup後は通常のCosine Annealing学習率スケジューラが適用されます
+
+**Warmup無しで再開する場合:**
+```bash
+python train.py \
+  --dataset dataset \
+  --resume checkpoints/checkpoint_epoch_50.pth \
+  --epochs 150 \
+  --lr 1e-4 \
+  --warmup-epochs 0
+```
 
 **利点:**
 - 学習が中断されても安全に再開できる
-- 解像度の段階的学習も継続される
+- 異なる学習率で継続学習できる
+- Cosine Warmupで学習率の急激な変化を防ぐ
 - TensorBoardのログも連続して記録される
 
 ### 詳細設定
@@ -222,6 +239,7 @@ python train.py \
 | `--epochs` | エポック数 | `100` |
 | `--batch-size` | バッチサイズ | `16` |
 | `--lr` | 学習率 | `1e-4` |
+| `--warmup-epochs` | 継続学習時のWarmupエポック数 | `3` |
 | `--resolution` | 学習時の画像解像度 (384/512/768/1024) | `384` |
 | `--save-every` | 保存間隔(エポック) | `10` |
 | `--early-stop-on-increase` | Val Loss上昇で停止 | `False` |
@@ -532,7 +550,46 @@ python inference.py \
 
 ## 📜 更新履歴
 
-### Version 3.0 (Latest)
+### Version 3.1 (Latest)
+
+**継続学習時の学習率管理の改善:**
+
+1. **CLI指定の学習率を使用**
+   - チェックポイントから再開する際、オプティマイザの状態を復元しなくなりました
+   - `--lr` で指定した学習率が常に使用されます
+   - これにより、継続学習時に異なる学習率で実験できます
+
+2. **Cosine Warmup機能の追加**
+   - 継続学習時、デフォルトで3エポックのCosine Warmupが適用されます
+   - 学習率が0から指定値まで徐々に上昇（cosine曲線）
+   - 急激な学習率変化によるロス上昇を防ぎます
+   - `--warmup-epochs` で期間を調整可能（0で無効化）
+
+3. **新しいオプション:**
+   - `--warmup-epochs`: Warmupエポック数（デフォルト: 3）
+
+**使用例:**
+```bash
+# デフォルトの3エポックWarmupで再開
+python train.py --resume checkpoint.pth --lr 1e-4 --epochs 150
+
+# Warmup期間を5エポックに変更
+python train.py --resume checkpoint.pth --lr 5e-5 --epochs 150 --warmup-epochs 5
+
+# Warmup無しで再開
+python train.py --resume checkpoint.pth --lr 1e-4 --epochs 150 --warmup-epochs 0
+```
+
+**破壊的変更:**
+- チェックポイントからオプティマイザの状態が復元されなくなりました
+- 継続学習時は常にCLI指定の学習率が使用されます
+
+**理由:**
+- 継続学習時に学習率を柔軟に調整できるようになります
+- Cosine Warmupにより学習率の急激な変化を防ぎます
+- より予測可能で制御しやすい動作になります
+
+### Version 3.0
 
 **重要な変更:**
 
