@@ -30,7 +30,7 @@ def load_model(checkpoint_path: str, device: str = 'cuda'):
 
     print(f"\n📦 Loading checkpoint: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Extract model info
     num_classes = len(checkpoint['classes'])
