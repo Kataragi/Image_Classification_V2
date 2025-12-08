@@ -346,35 +346,30 @@ def main():
         pin_memory=True
     )
 
-    # Create model
-    num_classes = len(full_dataset.classes)
-    model = create_model(num_classes, args.use_msa_net, device)
-
-    # Loss and optimizer
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
-
     # Training loop state
     best_val_loss = float('inf')
     val_loss_history = []
     start_epoch = 1
     is_resumed = False
+    use_msa_net = args.use_msa_net
 
-    # Resume from checkpoint if specified
+    # Resume from checkpoint if specified - load checkpoint first to get model architecture info
+    checkpoint = None
     if args.resume:
         if os.path.isfile(args.resume):
             print(f"\n📥 Loading checkpoint: {args.resume}")
             checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
 
-            # Load model state
-            model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"  ✓ Model state loaded")
+            # Get model architecture from checkpoint
+            use_msa_net = checkpoint.get('use_msa_net', False)
 
             # Restore training state
             start_epoch = checkpoint['epoch'] + 1
             best_val_loss = checkpoint.get('best_val_loss', checkpoint.get('val_loss', float('inf')))
             is_resumed = True
 
+            print(f"  ✓ Checkpoint loaded")
+            print(f"  ✓ MSA-Net: {'Enabled' if use_msa_net else 'Disabled'} (from checkpoint)")
             print(f"  ✓ Resuming from epoch {start_epoch}")
             print(f"  ✓ Best val loss: {best_val_loss:.4f}")
             print(f"  ✓ Using CLI learning rate: {args.lr}")
@@ -383,6 +378,19 @@ def main():
         else:
             print(f"❌ Checkpoint not found: {args.resume}")
             print(f"   Starting training from scratch...")
+
+    # Create model (use checkpoint's MSA-Net setting if resuming)
+    num_classes = len(full_dataset.classes)
+    model = create_model(num_classes, use_msa_net, device)
+
+    # Load model weights from checkpoint if resuming
+    if checkpoint is not None:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"  ✓ Model state loaded")
+
+    # Loss and optimizer
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
 
     # Setup learning rate scheduler
     if is_resumed and args.warmup_epochs > 0:
@@ -462,7 +470,7 @@ def main():
                     'best_val_loss': best_val_loss,
                     'resolution': args.resolution,
                     'classes': full_dataset.classes,
-                    'use_msa_net': args.use_msa_net
+                    'use_msa_net': use_msa_net
                 }, os.path.join(args.output_dir, f'early_stop_epoch_{epoch}.pth'))
 
                 break
@@ -479,7 +487,7 @@ def main():
                 'best_val_loss': best_val_loss,
                 'resolution': args.resolution,
                 'classes': full_dataset.classes,
-                'use_msa_net': args.use_msa_net
+                'use_msa_net': use_msa_net
             }, os.path.join(args.output_dir, 'best_model.pth'))
 
         # Periodic save
@@ -493,7 +501,7 @@ def main():
                 'best_val_loss': best_val_loss,
                 'resolution': args.resolution,
                 'classes': full_dataset.classes,
-                'use_msa_net': args.use_msa_net
+                'use_msa_net': use_msa_net
             }, os.path.join(args.output_dir, f'checkpoint_epoch_{epoch}.pth'))
 
         # Step scheduler
@@ -513,7 +521,7 @@ def main():
         'best_val_loss': best_val_loss,
         'resolution': args.resolution,
         'classes': full_dataset.classes,
-        'use_msa_net': args.use_msa_net
+        'use_msa_net': use_msa_net
     }, os.path.join(args.output_dir, 'final_model.pth'))
 
     writer.close()
